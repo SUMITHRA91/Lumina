@@ -1,0 +1,21 @@
+# Node.js
+node_modules/
+dist/
+build/
+.env
+.DS_Store
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+db.sqlite3
+
+# IDEs
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
