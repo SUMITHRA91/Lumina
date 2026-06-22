@@ -4,7 +4,7 @@ from rest_framework import status
 import random
 from .model_utils import model_manager, esconv_manager
 from .emotion_utils import emotion_detector
-from .models import EmergencyContact
+from .models import EmergencyContact, ChatSession, ChatMessage
 from .serializers import EmergencyContactSerializer
 from .sms_utils import notify_emergency_contacts
 from .email_utils import notify_emergency_contacts_email
@@ -201,6 +201,30 @@ def finalize_response(reply, language):
             
     return translated_reply, lang_code, audio_base64_list
 
+def save_chat_history(session_id, user_text, ai_text, scores=None):
+    session = None
+    if session_id:
+        try:
+            session = ChatSession.objects.get(id=session_id)
+        except ChatSession.DoesNotExist:
+            pass
+            
+    if not session:
+        session = ChatSession.objects.create()
+        
+    distress = None
+    if scores:
+        distress = scores.get('sad', 0) * 0.7 + scores.get('fearful', 0) * 0.3
+        
+    if user_text:
+        ChatMessage.objects.create(session=session, sender='USER', text=user_text, distress_score=distress)
+    if ai_text:
+        if isinstance(ai_text, list):
+            ai_text = "\n".join(ai_text)
+        ChatMessage.objects.create(session=session, sender='AI', text=ai_text)
+        
+    return session.id
+
 class ChatView(APIView):
     def post(self, request):
         text = request.data.get('text', '')
@@ -209,6 +233,7 @@ class ChatView(APIView):
         user_name = request.data.get('user_name', 'friend')
         user_id = request.data.get('user_id', 'anonymous')
         alert_state = request.data.get('alert_state', None)
+        session_id = request.data.get('session_id', None)
 
         # Auto-detect alert state if frontend hasn't sustained one yet
         if not alert_state:
@@ -236,6 +261,8 @@ class ChatView(APIView):
             reply = [reply]
 
         final_reply, lang_code, audio_data = finalize_response(reply, language)
+        
+        saved_session_id = save_chat_history(session_id, text, final_reply, scores)
 
         return Response({
             "reply": final_reply,
@@ -244,6 +271,7 @@ class ChatView(APIView):
             "audio_data": audio_data,
             "crisis": is_crisis,
             "alert_state": alert_state,
+            "session_id": saved_session_id,
         }, status=status.HTTP_200_OK)
 
 GUIDANCE_RESPONSES = [
@@ -276,6 +304,7 @@ class CounselorView(APIView):
         user_name = request.data.get('user_name', 'friend')
         user_id = request.data.get('user_id', 'anonymous')
         alert_state = request.data.get('alert_state', None)
+        session_id = request.data.get('session_id', None)
 
         if not alert_state:
             alert_state = detect_alert_state(text, scores)
@@ -302,6 +331,8 @@ class CounselorView(APIView):
 
         final_reply, lang_code, audio_data = finalize_response(reply, language)
 
+        saved_session_id = save_chat_history(session_id, text, final_reply, scores)
+
         return Response({
             "reply": final_reply,
             "emotion": emotion,
@@ -310,6 +341,7 @@ class CounselorView(APIView):
             "style": "guidance",
             "crisis": is_crisis,
             "alert_state": alert_state,
+            "session_id": saved_session_id,
         }, status=status.HTTP_200_OK)
 
 class ESConvCounselorView(APIView):
@@ -320,6 +352,7 @@ class ESConvCounselorView(APIView):
         user_name = request.data.get('user_name', 'friend')
         user_id = request.data.get('user_id', 'anonymous')
         alert_state = request.data.get('alert_state', None)
+        session_id = request.data.get('session_id', None)
 
         if not alert_state:
             alert_state = detect_alert_state(text, scores)
@@ -349,6 +382,8 @@ class ESConvCounselorView(APIView):
 
         final_reply, lang_code, audio_data = finalize_response(reply, language)
 
+        saved_session_id = save_chat_history(session_id, text, final_reply, scores)
+
         return Response({
             "reply": final_reply,
             "emotion": emotion,
@@ -357,4 +392,5 @@ class ESConvCounselorView(APIView):
             "style": "esconv",
             "crisis": is_crisis,
             "alert_state": alert_state,
+            "session_id": saved_session_id,
         }, status=status.HTTP_200_OK)

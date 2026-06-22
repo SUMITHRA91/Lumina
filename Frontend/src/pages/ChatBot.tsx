@@ -33,6 +33,12 @@ const speak = (text: string, onEnd?: () => void) => {
   if (v) u.voice = v;
   u.onend = () => onEnd?.();
   u.onerror = () => onEnd?.();
+  
+  // Fallback timeout to prevent infinite wait if browser speech engine hangs
+  setTimeout(() => {
+    onEnd?.();
+  }, 15000);
+
   setTimeout(() => window.speechSynthesis.speak(u), 50);
 };
 

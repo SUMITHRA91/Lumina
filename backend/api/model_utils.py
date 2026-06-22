@@ -1,7 +1,7 @@
 """
-model_utils.py  –  Lumina AI response generation via Google Gemini API.
+model_utils.py  –  Lumina AI response generation via Local Ollama API.
 
-Replaces the previous matrix.pkl / vectorizer.pkl TF-IDF retrieval system.
+Replaces the previous Google Gemini API system.
 Public interface is kept identical so views.py does not need to change:
   - model_manager.get_response(text)  → list[str] or None
   - esconv_manager.get_response(text) → list[str] or None
@@ -10,30 +10,21 @@ Public interface is kept identical so views.py does not need to change:
 import logging
 import textwrap
 import time
-import threading
+import requests
+import os
+from dotenv import load_dotenv
 
-from google import genai
-from google.genai import types
+# Ensure environment variables are loaded
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# Gemini configuration
+# Ollama configuration
 # ─────────────────────────────────────────────
-import os
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_KEY")
-# gemini-2.5-flash-lite: working model with available quota on this key
-GEMINI_MODEL   = "gemini-2.5-flash-lite"
-
-_client = genai.Client(api_key=GEMINI_API_KEY)
-
-# ─────────────────────────────────────────────
-# Quota / retry state
-# ─────────────────────────────────────────────
-_quota_lock        = threading.Lock()
-_quota_retry_after = 0.0   # epoch seconds – do not call Gemini before this time
-MAX_RETRIES        = 3
-BASE_BACKOFF       = 2     # seconds
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
+# Defaulting to llama3.2, user can override via .env
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
 # System instruction shared by default
 _SYSTEM_PROMPT = textwrap.dedent("""
@@ -52,7 +43,7 @@ _SYSTEM_PROMPT = textwrap.dedent("""
 
 
 def _parse_chunks(raw: str) -> list[str] | None:
-    """Split a Gemini response into readable paragraph chunks."""
+    """Split a text response into readable paragraph chunks."""
     paragraphs = [p.strip() for p in raw.split("\n") if p.strip()]
     if not paragraphs:
         paragraphs = [raw]
@@ -75,72 +66,43 @@ def _parse_chunks(raw: str) -> list[str] | None:
     return chunks if chunks else None
 
 
-def _call_gemini(user_text: str, system_override: str | None = None) -> list[str] | None:
+def _call_ollama(user_text: str, system_override: str | None = None) -> list[str] | None:
     """
-    Calls the Gemini API with retry + exponential backoff on rate-limit errors.
+    Calls the local Ollama API to generate a response.
     Returns a list of text chunks, or None on unrecoverable failure.
     """
-    global _quota_retry_after
-
-    # Fast-fail if we know we're still in a quota cooldown
-    with _quota_lock:
-        wait = _quota_retry_after - time.time()
-    if wait > 0:
-        logger.warning(f"Gemini quota cooldown active — {wait:.0f}s remaining.")
-        return None
-
     system = system_override if system_override else _SYSTEM_PROMPT
+    
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": user_text,
+        "system": system,
+        "stream": False,
+        "options": {
+            "temperature": 0.8,
+            "num_predict": 512,
+        }
+    }
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            result = _client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=user_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=system,
-                    temperature=0.8,
-                    max_output_tokens=512,
-                ),
-            )
+    try:
+        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
+        response.raise_for_status()
+        
+        data = response.json()
+        raw = data.get("response", "").strip()
+        
+        if not raw:
+            return None
+            
+        return _parse_chunks(raw)
 
-            raw = result.text.strip() if result.text else ""
-            if not raw:
-                return None
-
-            # Reset quota guard on success
-            with _quota_lock:
-                _quota_retry_after = 0.0
-
-            return _parse_chunks(raw)
-
-        except Exception as exc:
-            err_str = str(exc)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                # Parse retry delay from error message if available
-                retry_delay = BASE_BACKOFF * (2 ** attempt)
-                try:
-                    import re
-                    match = re.search(r"retry in (\d+\.?\d*)s", err_str, re.IGNORECASE)
-                    if match:
-                        retry_delay = float(match.group(1)) + 1
-                except Exception:
-                    pass
-
-                with _quota_lock:
-                    _quota_retry_after = time.time() + retry_delay
-
-                logger.warning(
-                    f"Gemini rate-limited (attempt {attempt}/{MAX_RETRIES}). "
-                    f"Retrying in {retry_delay:.1f}s..."
-                )
-                if attempt < MAX_RETRIES:
-                    time.sleep(retry_delay)
-            else:
-                logger.error(f"Gemini API error: {exc}")
-                return None
-
-    logger.error("Gemini API failed after max retries.")
-    return None
+    except requests.exceptions.RequestException as exc:
+        logger.error(f"Ollama API error: {exc}")
+        print(f"DEBUG ERROR: Ollama API error: {exc}") # Print to stdout for visibility
+        return None
+    except Exception as exc:
+        logger.error(f"Unexpected error calling Ollama: {exc}")
+        return None
 
 
 # ─────────────────────────────────────────────
@@ -148,7 +110,7 @@ def _call_gemini(user_text: str, system_override: str | None = None) -> list[str
 # ─────────────────────────────────────────────
 class ModelManager:
     """
-    Provides general mental-health supportive responses via Gemini.
+    Provides general mental-health supportive responses via Ollama.
     """
 
     _instance = None
@@ -168,13 +130,13 @@ class ModelManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = True
-            logger.info("ModelManager initialised (Gemini API backend).")
+            logger.info(f"ModelManager initialised (Ollama API backend: {OLLAMA_MODEL}).")
         return cls._instance
 
     def get_response(self, query: str) -> list[str] | None:
         if not query or not query.strip():
             return None
-        return _call_gemini(query, system_override=self._STANDARD_SYSTEM)
+        return _call_ollama(query, system_override=self._STANDARD_SYSTEM)
 
 
 # ─────────────────────────────────────────────
@@ -182,7 +144,7 @@ class ModelManager:
 # ─────────────────────────────────────────────
 class ESConvManager:
     """
-    Provides empathetic supporter-style responses via Gemini,
+    Provides empathetic supporter-style responses via Ollama,
     inspired by the ESConv dataset style.
     """
 
@@ -205,13 +167,13 @@ class ESConvManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = True
-            logger.info("ESConvManager initialised (Gemini API backend).")
+            logger.info(f"ESConvManager initialised (Ollama API backend: {OLLAMA_MODEL}).")
         return cls._instance
 
     def get_response(self, query: str) -> list[str] | None:
         if not query or not query.strip():
             return None
-        return _call_gemini(query, system_override=self._ESCONV_SYSTEM)
+        return _call_ollama(query, system_override=self._ESCONV_SYSTEM)
 
 
 # ─────────────────────────────────────────────

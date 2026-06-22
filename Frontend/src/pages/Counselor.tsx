@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, ArrowLeft, MessageCircle, Activity, ShieldCheck, Heart, Zap, Brain } from "lucide-react";
+import { Sparkles, ArrowLeft, MessageCircle, Activity, ShieldCheck, Heart, Zap, Brain, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { CounselorAvatar, type Gesture } from "@/components/lumina/CounselorAvatar";
@@ -25,6 +25,7 @@ const Counselor = () => {
   });
 
   const [counselorType, setCounselorType] = useState<"standard" | "esconv" | null>(null);
+  const [callStarted, setCallStarted] = useState(false);
 
   // --- Diagnostic Alerting (5-minute rolling window) ---
   const ALERT_WINDOW_MS = 5 * 60 * 1000;
@@ -100,6 +101,8 @@ const Counselor = () => {
               size="sm" 
               onClick={() => {
                 setCounselorType(null);
+                setCounselorType(null);
+                setCallStarted(false);
                 setScores(EMPTY);
               }}
               className="rounded-full bg-white/60 backdrop-blur text-xs"
@@ -170,104 +173,128 @@ const Counselor = () => {
               </button>
             </div>
           </div>
+        ) : !callStarted ? (
+          /* ── Join Call Screen ── */
+          <div className="flex flex-col items-center justify-center h-[calc(100vh-120px)] animate-fade-up">
+            <div className="w-32 h-32 rounded-[40px] bg-white/60 backdrop-blur-md border border-white/50 flex items-center justify-center mb-8 shadow-xl">
+              <Video className="w-12 h-12 text-[#3A5F4D]" />
+            </div>
+            <h1 className="font-serif text-5xl mb-4 text-foreground/90">Ready to join?</h1>
+            <p className="text-muted-foreground text-lg mb-8 max-w-md text-center">
+              Your microphone and secure vision sensor will be activated. 
+              Everything stays private in your browser.
+            </p>
+            <Button 
+              size="lg" 
+              className="rounded-full px-12 h-16 text-lg bg-[#3A5F4D] hover:bg-[#2A4538] shadow-glow" 
+              onClick={() => setCallStarted(true)}
+            >
+              Join Secure Call
+            </Button>
+            <Button 
+              variant="ghost" 
+              className="mt-4 rounded-full"
+              onClick={() => setCounselorType(null)}
+            >
+              Cancel
+            </Button>
+          </div>
         ) : (
-          /* ── Active Session Layout (3 Columns) ── */
-          <div className="grid lg:grid-cols-[320px_1fr_400px] xl:grid-cols-[360px_1fr_450px] gap-6 items-start animate-fade-in mt-4">
+          /* ── Active Session Layout (Video Call Style) ── */
+          <div className="flex flex-col lg:flex-row h-[calc(100vh-120px)] gap-6 animate-fade-in mt-2 pb-6">
             
-            {/* Left Column: Diagnostics */}
-            <div className="space-y-6">
-              {/* Camera Container (Fixed to remove overflow blocking) */}
-              <div className="p-4 rounded-[32px] bg-white/50 backdrop-blur-xl border border-border/40 shadow-sm relative z-20">
-                <div className="flex items-center gap-2 mb-4 px-2">
-                  <ShieldCheck className="w-4 h-4 text-[#3A5F4D]" />
-                  <h3 className="font-serif text-sm">Secure Vision Sensor</h3>
+            {/* Main Video Area (Left/Center) */}
+            <div className="flex-1 relative rounded-[40px] bg-white/40 backdrop-blur-3xl border border-white/50 shadow-xl overflow-hidden flex items-center justify-center min-h-[500px]">
+              {/* Background Glow */}
+              <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
+              
+              {/* Large Avatar */}
+              <div className="relative z-10 flex flex-col items-center transform scale-110 lg:scale-125 transition-transform duration-700">
+                <CounselorAvatar
+                  size={340}
+                  speaking={avatarState.speaking}
+                  mood={avatarState.mood}
+                  gesture={avatarState.gesture}
+                />
+              </div>
+
+              {/* Name Tag (Bottom Left) */}
+              <div className="absolute bottom-6 left-6 z-20 px-6 py-3 rounded-3xl bg-white/60 backdrop-blur-md border border-white/50 shadow-sm flex items-center gap-3">
+                 <div className={`w-3 h-3 rounded-full ${avatarState.speaking ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500'}`} />
+                 <div>
+                   <h2 className="font-serif text-lg font-medium text-foreground/90">
+                     {counselorType === "standard" ? "Lumina Expert Guide" : "Lumina Empathic Soul"}
+                   </h2>
+                   <p className="text-xs text-muted-foreground">
+                      {counselorType === "standard" ? "Clinical Path" : "Empathy Path"}
+                   </p>
+                 </div>
+              </div>
+
+              {/* User Camera PIP (Bottom Right) */}
+              <div className="absolute bottom-6 right-6 w-64 lg:w-80 rounded-3xl overflow-hidden shadow-2xl border-4 border-white/60 bg-black/5 backdrop-blur-md z-30 transition-all hover:scale-105 duration-300">
+                <div className="absolute top-3 left-3 z-40 px-2 py-1 rounded-full bg-black/40 backdrop-blur text-[10px] text-white flex items-center gap-1.5 shadow-sm">
+                  <ShieldCheck className="w-3 h-3" />
+                  You
                 </div>
-                {/* The camera feed handles its own container inside, but we ensure it's clickable */}
-                <div className="relative z-30">
+                {/* The camera feed */}
+                <div className="relative aspect-[4/3] [&_video]:object-cover [&_video]:w-full [&_video]:h-full [&_.bg-gradient-warm]:bg-transparent [&_.border-border\\/50]:border-transparent">
                   <CameraFeed onScores={setScores} />
                 </div>
               </div>
+              
+              {/* Session Status Overlay (Top Left) */}
+              <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-white/70 backdrop-blur-md border border-white/50 shadow-sm">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${distressScore(scores) > 0.6 ? "bg-red-100" : "bg-amber-100"}`}>
+                    <Zap className={`w-4 h-4 ${distressScore(scores) > 0.6 ? "text-red-500" : "text-amber-500"}`} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest leading-none mb-1">Distress</p>
+                    <p className="text-xs font-semibold leading-none text-foreground/80">{distressScore(scores) > 0.6 ? "High" : distressScore(scores) > 0.3 ? "Moderate" : "Low"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-white/70 backdrop-blur-md border border-white/50 shadow-sm">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${alertState ? "bg-indigo-100" : "bg-emerald-100"}`}>
+                    <Brain className={`w-4 h-4 ${alertState ? "text-indigo-600" : "text-emerald-600"}`} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest leading-none mb-1">Alert</p>
+                    <p className="text-xs font-semibold leading-none text-foreground/80">{alertState === "panic_loop" ? "Panic Loop" : alertState === "lethargy" ? "Lethargy" : "Monitoring"}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-              {/* Emotion Sync */}
-              <div className="p-5 rounded-[32px] bg-white/50 backdrop-blur-xl border border-border/40 shadow-sm">
-                <div className="flex items-center gap-2 mb-4">
+            {/* Right Sidebar (Chat & Emotion) */}
+            <div className="w-full lg:w-[400px] xl:w-[450px] flex flex-col gap-4 h-full shrink-0">
+              
+              {/* Emotion Sync Compact */}
+              <div className="p-5 rounded-[32px] bg-white/60 backdrop-blur-xl border border-white/50 shadow-sm shrink-0">
+                <div className="flex items-center gap-2 mb-3">
                   <Activity className="w-4 h-4 text-[#3A5F4D]" />
                   <h3 className="font-serif text-sm">Emotional Sync</h3>
                 </div>
                 <EmotionMeter scores={scores} />
               </div>
 
-              {/* Mood Fuel */}
-              <MoodFuelPanel scores={scores} />
-            </div>
-
-            {/* Center Column: Avatar Stage */}
-            <div className="flex flex-col gap-6">
-              <div className="rounded-[40px] bg-white/40 backdrop-blur-2xl border border-border/30 shadow-lg p-10 flex flex-col items-center justify-center relative overflow-hidden h-[400px]">
-                <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
-                <div className="relative z-10 flex flex-col items-center gap-6 text-center">
-                  <CounselorAvatar
-                    size={200}
-                    speaking={avatarState.speaking}
-                    mood={avatarState.mood}
-                    gesture={avatarState.gesture}
+              {/* Chat Panel */}
+              <div className="flex-1 rounded-[32px] overflow-hidden bg-white/70 backdrop-blur-2xl border border-white/50 shadow-xl relative z-10 flex flex-col min-h-[400px]">
+                <div className="px-5 py-4 border-b border-white/40 bg-white/40 flex items-center gap-2 shrink-0">
+                  <MessageCircle className="w-4 h-4 text-[#3A5F4D]" />
+                  <span className="font-serif text-sm font-medium">Clinical Secure Chat</span>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <ChatPanel
+                    scores={scores}
+                    onUserMessage={() => {}}
+                    onAvatarStateChange={setAvatarState}
+                    alertState={alertState}
+                    apiUrl={`http://localhost:8000/api/${counselorType === 'standard' ? 'counselor' : 'esconv-counselor'}/`}
                   />
-                  <div>
-                    <h2 className="font-serif text-2xl text-foreground/90">
-                      {counselorType === "standard" ? "Lumina Expert Guide" : "Lumina Empathic Soul"}
-                    </h2>
-                    <p className="text-sm text-muted-foreground mt-2 max-w-sm">
-                      {counselorType === "standard" 
-                        ? "I'm offering structured psychiatric guidance today."
-                        : "I'm here to listen deeply and walk through your feelings."}
-                    </p>
-                  </div>
                 </div>
               </div>
 
-              {/* Session Status Card */}
-              <div className="rounded-[32px] bg-white/50 backdrop-blur-xl border border-border/40 p-6 flex items-center justify-between shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                    <Zap className="w-5 h-5 text-amber-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Distress Level</p>
-                    <p className={`text-xs ${distressScore(scores) > 0.6 ? "text-red-500 font-bold" : "text-emerald-600"}`}>
-                      {distressScore(scores) > 0.6 ? "Elevated" : distressScore(scores) > 0.3 ? "Moderate" : "Calm baseline"}
-                    </p>
-                  </div>
-                </div>
-                <div className="h-10 w-px bg-border/40 mx-4" />
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <Brain className="w-5 h-5 text-indigo-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Alert Mode</p>
-                    <p className="text-xs text-muted-foreground uppercase tracking-widest font-bold">
-                      {alertState === "panic_loop" ? "Panic Loop" : alertState === "lethargy" ? "Lethargy" : "Monitoring"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Chat Panel */}
-            <div className="h-[calc(100vh-140px)] rounded-[40px] overflow-hidden bg-white/60 backdrop-blur-2xl border border-border/40 shadow-xl relative z-10 flex flex-col">
-              <div className="px-6 py-4 border-b border-border/30 bg-white/40 flex items-center gap-2 shrink-0">
-                <MessageCircle className="w-4 h-4 text-[#3A5F4D]" />
-                <span className="font-serif text-sm font-medium">Clinical Secure Chat</span>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <ChatPanel
-                  scores={scores}
-                  onUserMessage={() => {}}
-                  onAvatarStateChange={setAvatarState}
-                  alertState={alertState}
-                  apiUrl={`http://localhost:8000/api/${counselorType === 'standard' ? 'counselor' : 'esconv-counselor'}/`}
-                />
-              </div>
             </div>
           </div>
         )}

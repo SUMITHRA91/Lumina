@@ -96,6 +96,7 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
   const [speaking, setSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [gesture, setGesture] = useState<Gesture>("none");
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const recognitionRef = useRef<any>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>(() => {
     const greeting = "Hi, I'm Lumina. Take your time. When you're ready, share whatever feels true — in words or just by being seen.";
@@ -120,8 +121,10 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
       recognitionRef.current.lang = 'en-US';
 
       recognitionRef.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInput(transcript);
+        const resultTranscript = event.results[0][0].transcript;
+        if (resultTranscript.trim()) {
+          send(resultTranscript);
+        }
         setIsListening(false);
       };
 
@@ -157,6 +160,29 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
       setIsListening(true);
     }
   };
+
+  // Auto-listen loop: seamlessly transition back to listening after avatar finishes speaking
+  useEffect(() => {
+    let timeoutId: number;
+
+    if (!speaking && !thinking && recognitionRef.current && !isListening) {
+      timeoutId = window.setTimeout(() => {
+        try {
+          recognitionRef.current.start();
+          setIsListening(true);
+        } catch (e) {
+          // Ignore errors if recognition has already started
+        }
+      }, 400); // Slight delay prevents browser "not allowed" errors on rapid restarts
+    } else if (speaking && isListening) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      setIsListening(false);
+    }
+
+    return () => window.clearTimeout(timeoutId);
+  }, [speaking, thinking, isListening]);
 
   useEffect(() => {
     onTranscriptChange?.(transcript, speaking ? currentSentence : -1);
@@ -244,8 +270,8 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
     }
   }, [isListening, userMood]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text) return;
     
     // Prime the voice engine with the user gesture
@@ -298,6 +324,7 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
           user_name: (window as any).LuminaUserName || "friend",
           user_id: "default-user",
           alert_state: alertState ?? null,
+          session_id: sessionId,
         }),
       });
 
@@ -306,6 +333,11 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
       }
 
       const data = await response.json();
+      
+      if (data.session_id) {
+        setSessionId(data.session_id);
+      }
+
       const langCode = data.language || 'en';
       const audioDataList = data.audio_data || [];
 
@@ -456,33 +488,17 @@ export const ChatPanel = ({ scores, onUserMessage, onAvatarStateChange, onTransc
         )}
       </div>
 
-      <div className="p-4 border-t border-border/50 bg-background/40">
-        <div className="flex gap-2 items-end">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder="Share what's on your mind…"
-            className="resize-none min-h-[52px] max-h-32 rounded-2xl border-border/60 focus-visible:ring-sage"
-            rows={1}
-          />
-          <Button
-            onClick={toggleListening}
-            variant="ghost"
-            size="icon"
-            className={`rounded-full h-12 w-12 flex-shrink-0 ${isListening ? 'text-destructive animate-pulse bg-destructive/10' : 'text-muted-foreground'}`}
-          >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </Button>
-          <Button onClick={send} size="icon" className="rounded-full h-12 w-12 flex-shrink-0">
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
+      {/* Listening Status Indicator */}
+      <div className="p-4 border-t border-white/30 bg-white/40 flex items-center justify-center shrink-0">
+        {isListening ? (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#3A5F4D]/10 text-[#3A5F4D] text-xs font-bold uppercase tracking-widest animate-pulse">
+            <Mic className="w-4 h-4" /> Listening to you...
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-muted text-muted-foreground text-xs font-bold uppercase tracking-widest">
+            <MicOff className="w-4 h-4" /> Mic muted
+          </div>
+        )}
       </div>
       {showCrisis && <CrisisPanel onDismiss={() => setShowCrisis(false)} />}
     </div>
