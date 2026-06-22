@@ -3,8 +3,7 @@ from google import genai
 from google.genai import types
 
 # Use the key from .env manually for testing if needed, or assume it's in env
-# For this test, I'll use the one I saw in .env
-API_KEY = "AIzaSyDO7f0XHvf-GN77Ezku1xpWsGfLugBVW1w"
+API_KEY = os.environ.get("GEMINI_API_KEY", "")
 MODEL = "gemini-flash-lite-latest"
 
 def test_gemini():
