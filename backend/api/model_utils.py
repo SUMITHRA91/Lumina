@@ -11,6 +11,10 @@ import logging
 import textwrap
 import time
 import threading
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded
+load_dotenv()
 
 from google import genai
 from google.genai import types
@@ -22,8 +26,8 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 import os
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_KEY")
-# gemini-2.5-flash-lite: working model with available quota on this key
-GEMINI_MODEL   = "gemini-2.5-flash-lite"
+# gemini-flash-lite-latest: specifically for high-throughput lite interaction
+GEMINI_MODEL   = "gemini-flash-latest"
 
 _client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -32,8 +36,8 @@ _client = genai.Client(api_key=GEMINI_API_KEY)
 # ─────────────────────────────────────────────
 _quota_lock        = threading.Lock()
 _quota_retry_after = 0.0   # epoch seconds – do not call Gemini before this time
-MAX_RETRIES        = 3
-BASE_BACKOFF       = 2     # seconds
+MAX_RETRIES        = 5
+BASE_BACKOFF       = 3     # seconds
 
 # System instruction shared by default
 _SYSTEM_PROMPT = textwrap.dedent("""
@@ -82,13 +86,6 @@ def _call_gemini(user_text: str, system_override: str | None = None) -> list[str
     """
     global _quota_retry_after
 
-    # Fast-fail if we know we're still in a quota cooldown
-    with _quota_lock:
-        wait = _quota_retry_after - time.time()
-    if wait > 0:
-        logger.warning(f"Gemini quota cooldown active — {wait:.0f}s remaining.")
-        return None
-
     system = system_override if system_override else _SYSTEM_PROMPT
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -100,6 +97,24 @@ def _call_gemini(user_text: str, system_override: str | None = None) -> list[str
                     system_instruction=system,
                     temperature=0.8,
                     max_output_tokens=512,
+                    safety_settings=[
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                    ],
                 ),
             )
 
@@ -126,6 +141,10 @@ def _call_gemini(user_text: str, system_override: str | None = None) -> list[str
                 except Exception:
                     pass
 
+                if retry_delay > 10.0:
+                    logger.warning(f"Gemini rate-limit wait too long ({retry_delay:.1f}s). Returning fallback.")
+                    return None
+
                 with _quota_lock:
                     _quota_retry_after = time.time() + retry_delay
 
@@ -136,7 +155,8 @@ def _call_gemini(user_text: str, system_override: str | None = None) -> list[str
                 if attempt < MAX_RETRIES:
                     time.sleep(retry_delay)
             else:
-                logger.error(f"Gemini API error: {exc}")
+                logger.error(f"Gemini API error (non-rate-limit): {exc}")
+                print(f"DEBUG ERROR: Gemini API error: {exc}") # Print to stdout for visibility in command_status
                 return None
 
     logger.error("Gemini API failed after max retries.")
